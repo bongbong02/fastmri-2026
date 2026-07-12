@@ -12,8 +12,41 @@ from utils.common.utils import save_reconstructions, ssim_loss
 from utils.common.loss_function import SSIMLoss
 from utils.model.varnet import VarNet
 from mraugment import MRAugment
+from utils.model.promptmr import PromptMR
 
 import os
+
+
+def build_model(args):
+    if getattr(args, 'model', 'varnet') == 'promptmr':
+        return PromptMR(
+            num_cascades=args.cascade,
+            num_adj_slices=args.num_adj_slices,
+            n_feat0=args.n_feat0,
+            feature_dim=list(args.feature_dim),
+            prompt_dim=list(args.prompt_dim),
+            sens_n_feat0=args.sens_n_feat0,
+            sens_feature_dim=list(args.sens_feature_dim),
+            sens_prompt_dim=list(args.sens_prompt_dim),
+            len_prompt=list(args.len_prompt),
+            prompt_size=list(args.prompt_size),
+            n_enc_cab=list(args.n_enc_cab),
+            n_dec_cab=list(args.n_dec_cab),
+            n_skip_cab=list(args.n_skip_cab),
+            n_bottleneck_cab=args.n_bottleneck_cab,
+            no_use_ca=args.no_use_ca,
+            learnable_prompt=args.learnable_prompt,
+            adaptive_input=not args.no_adaptive_input,
+            n_buffer=args.n_buffer,
+            n_history=args.n_history,
+            use_sens_adj=not args.no_sens_adj,
+            use_checkpoint=args.use_checkpoint,
+            compute_sens_per_coil=args.compute_sens_per_coil,
+        )
+    return VarNet(num_cascades=args.cascade,
+                  chans=args.chans,
+                  sens_chans=args.sens_chans)
+
 
 def train_epoch(args, epoch, model, data_loader, optimizer, loss_type):
     model.train()
@@ -99,9 +132,7 @@ def train(args):
     torch.cuda.set_device(device)
     print('Current cuda device: ', torch.cuda.current_device())
 
-    model = VarNet(num_cascades=args.cascade, 
-                   chans=args.chans, 
-                   sens_chans=args.sens_chans)
+    model = build_model(args)
     model.to(device=device)
 
     loss_type = SSIMLoss().to(device=device)

@@ -26,9 +26,35 @@ def parse():
     parser.add_argument('-t', '--data-path-train', type=Path, default='/Data/train/', help='Directory of train data')
     parser.add_argument('-v', '--data-path-val', type=Path, default='/Data/val/', help='Directory of validation data')
     
-    parser.add_argument('--cascade', type=int, default=1, help='Number of cascades | Should be less than 12') ## important hyperparameter
-    parser.add_argument('--chans', type=int, default=9, help='Number of channels for cascade U-Net | 18 in original varnet') ## important hyperparameter
-    parser.add_argument('--sens_chans', type=int, default=4, help='Number of channels for sensitivity map U-Net | 8 in original varnet') ## important hyperparameter
+    parser.add_argument('--model', type=str, default='promptmr', choices=['promptmr', 'varnet'], help='Model architecture')
+    parser.add_argument('--cascade', type=int, default=4, help='Number of cascades | 12 in PromptMR+ paper') ## important hyperparameter
+    parser.add_argument('--chans', type=int, default=9, help='[varnet] Number of channels for cascade U-Net | 18 in original varnet')
+    parser.add_argument('--sens_chans', type=int, default=4, help='[varnet] Number of channels for sensitivity map U-Net | 8 in original varnet')
+
+    # PromptMR+ hyperparameters (defaults are a scaled-down config; paper: n_feat0=48,
+    # feature_dim 72 96 120, prompt_dim 24 48 72, sens_n_feat0=24, sens_feature_dim 36 48 60,
+    # sens_prompt_dim 12 24 36, cascade 12, n_history 11)
+    parser.add_argument('--num_adj_slices', type=int, default=5, help='Number of adjacent slices (odd)')
+    parser.add_argument('--n_feat0', type=int, default=24, help='Number of channels of first feature extraction')
+    parser.add_argument('--feature_dim', type=int, nargs=3, default=[36, 48, 60], help='Feature dims of 3 encoder levels')
+    parser.add_argument('--prompt_dim', type=int, nargs=3, default=[12, 24, 36], help='Prompt dims of 3 decoder levels')
+    parser.add_argument('--sens_n_feat0', type=int, default=12, help='Sens net: first feature channels')
+    parser.add_argument('--sens_feature_dim', type=int, nargs=3, default=[18, 24, 30], help='Sens net: feature dims')
+    parser.add_argument('--sens_prompt_dim', type=int, nargs=3, default=[6, 12, 18], help='Sens net: prompt dims')
+    parser.add_argument('--len_prompt', type=int, nargs=3, default=[5, 5, 5], help='Number of prompt components per level')
+    parser.add_argument('--prompt_size', type=int, nargs=3, default=[64, 32, 16], help='Spatial size of prompts per level')
+    parser.add_argument('--n_enc_cab', type=int, nargs=3, default=[2, 3, 3], help='Number of CABs per encoder level')
+    parser.add_argument('--n_dec_cab', type=int, nargs=3, default=[2, 2, 3], help='Number of CABs per decoder level')
+    parser.add_argument('--n_skip_cab', type=int, nargs=3, default=[1, 1, 1], help='Number of CABs per skip connection')
+    parser.add_argument('--n_bottleneck_cab', type=int, default=3, help='Number of CABs in bottleneck')
+    parser.add_argument('--n_history', type=int, default=3, help='History features across cascades (PromptMR+; 11 in paper)')
+    parser.add_argument('--n_buffer', type=int, default=4, help='Adaptive input buffer channels (PromptMR+)')
+    parser.add_argument('--no_adaptive_input', action='store_true', help='Disable adaptive input buffer')
+    parser.add_argument('--no_use_ca', action='store_true', help='Disable channel attention')
+    parser.add_argument('--learnable_prompt', action='store_true', help='Make prompt parameters learnable')
+    parser.add_argument('--no_sens_adj', action='store_true', help='Sens net sees single slices instead of adjacent stack')
+    parser.add_argument('--use_checkpoint', action='store_true', help='Gradient checkpointing (slower, less VRAM)')
+    parser.add_argument('--compute_sens_per_coil', action='store_true', help='Compute sens maps per coil (slower, less VRAM)')
     parser.add_argument('--input-key', type=str, default='kspace', help='Name of input key')
     parser.add_argument('--target-key', type=str, default='image_label', help='Name of target key')
     parser.add_argument('--max-key', type=str, default='max', help='Name of max key in attributes')

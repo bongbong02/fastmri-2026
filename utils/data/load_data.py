@@ -6,11 +6,13 @@ from pathlib import Path
 import numpy as np
 
 class SliceData(Dataset):
-    def __init__(self, root, transform, input_key, target_key, forward=False):
+    def __init__(self, root, transform, input_key, target_key, forward=False, num_adj_slices=1):
         self.transform = transform
         self.input_key = input_key
         self.target_key = target_key
         self.forward = forward
+        assert num_adj_slices % 2 == 1, "num_adj_slices must be odd"
+        self.num_adj_slices = num_adj_slices
         self.image_examples = []
         self.kspace_examples = []
 
@@ -43,6 +45,11 @@ class SliceData(Dataset):
     def __len__(self):
         return len(self.kspace_examples)
 
+    def _adj_slice_indices(self, dataslice, num_slices):
+        # clamped neighborhood of the center slice, e.g. 5 -> [s-2 .. s+2]
+        half = self.num_adj_slices // 2
+        return [min(max(dataslice + i, 0), num_slices - 1) for i in range(-half, half + 1)]
+
     def __getitem__(self, i):
         if not self.forward:
             image_fname, _ = self.image_examples[i]
@@ -51,7 +58,14 @@ class SliceData(Dataset):
             raise ValueError(f"Image file {image_fname.name} does not match kspace file {kspace_fname.name}")
 
         with h5py.File(kspace_fname, "r") as hf:
-            input = hf[self.input_key][dataslice]
+            if self.num_adj_slices == 1:
+                input = hf[self.input_key][dataslice]
+            else:
+                num_slices = hf[self.input_key].shape[0]
+                input = np.concatenate(
+                    [hf[self.input_key][s] for s in self._adj_slice_indices(dataslice, num_slices)],
+                    axis=0,
+                )
             mask =  np.array(hf["mask"])
         if self.forward:
             target = -1
@@ -76,7 +90,8 @@ def create_data_loaders(data_path, args, shuffle=False, isforward=False, augment
         transform=DataTransform(isforward, max_key_, augmentor=augmentor),
         input_key=args.input_key,
         target_key=target_key_,
-        forward = isforward
+        forward = isforward,
+        num_adj_slices=getattr(args, 'num_adj_slices', 1)
     )
 
     data_loader = DataLoader(

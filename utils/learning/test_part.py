@@ -6,24 +6,26 @@ from collections import defaultdict
 from utils.common.utils import save_reconstructions
 from utils.data.load_data import create_data_loaders
 from utils.data.transforms import to_tensor
-from utils.model.varnet import VarNet
+from utils.learning.train_part import build_model
 
 # ---------------------------------------------------------------------------
 # Team-editable reconstruction contract.
 # recon_eval.py (the fixed timing harness) only calls the three functions
-# below. This branch feeds `kspace` + `mask` (k-space domain) to a VarNet; a
-# U-Net branch reimplements the same three functions for the image domain.
+# below. This branch feeds `kspace` + `mask` (k-space domain) to a PromptMR+
+# model (or VarNet fallback); the model is rebuilt from the hyperparameters
+# stored in the checkpoint, so the harness CLI args stay untouched.
 # ---------------------------------------------------------------------------
 INPUT_KIND = "kspace"      # harness delivers the kspace H5 to prep_volume
 
 
 def load_model(args, device):
-    model = VarNet(num_cascades=args.cascade,
-                   chans=args.chans,
-                   sens_chans=args.sens_chans).to(device=device)
     checkpoint = torch.load(args.exp_dir / 'best_model.pt', map_location='cpu', weights_only=False)
+    train_args = checkpoint.get('args', args)
+    model = build_model(train_args).to(device=device)
     model.load_state_dict(checkpoint['model'])
     model.eval()
+    # data loading must match the trained slice neighborhood
+    model.inference_num_adj_slices = getattr(train_args, 'num_adj_slices', 1)
     return model
 
 
@@ -35,11 +37,23 @@ def prep_volume(image_path, kspace_path, device):
     return {"kspace": kspace, "mask": mask, "device": device, "num_slices": kspace.shape[0]}
 
 
+def _gather_adj_slices(kspace_vol, s, num_adj_slices):
+    """Stack the clamped [s-k .. s+k] neighborhood along the coil axis."""
+    if num_adj_slices == 1:
+        return kspace_vol[s]
+    half = num_adj_slices // 2
+    n = kspace_vol.shape[0]
+    idx = [min(max(s + i, 0), n - 1) for i in range(-half, half + 1)]
+    return np.concatenate([kspace_vol[j] for j in idx], axis=0)
+
+
 def recon_slice(model, ctx, s):
     """Reconstruct a single slice (batch=1). Timed by the harness."""
     device = ctx["device"]
     mask = ctx["mask"]
-    kspace = to_tensor(ctx["kspace"][s] * mask)
+    num_adj_slices = getattr(model, 'inference_num_adj_slices', getattr(model, 'num_adj_slices', 1))
+    kspace_np = _gather_adj_slices(ctx["kspace"], s, num_adj_slices)
+    kspace = to_tensor(kspace_np * mask)
     kspace = torch.stack((kspace.real, kspace.imag), dim=-1).unsqueeze(0).to(device=device)
     mask_t = torch.from_numpy(mask.reshape(1, 1, kspace.shape[-2], 1).astype(np.float32)).byte()
     mask_t = mask_t.unsqueeze(0).to(device=device)
@@ -72,6 +86,7 @@ def forward(args):
     print('Current cuda device ', torch.cuda.current_device())
 
     model = load_model(args, device)
+    args.num_adj_slices = model.inference_num_adj_slices
 
     forward_loader = create_data_loaders(data_path=args.data_path, args=args, isforward=True)
     reconstructions, inputs = test(args, model, forward_loader)
