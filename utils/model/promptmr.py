@@ -445,14 +445,9 @@ class PromptMR(nn.Module):
             ) for _ in range(num_cascades)
         ])
 
-    def forward(self, masked_kspace: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
-        """
-        Args:
-            masked_kspace: (b, num_adj_slices*coil, h, w, 2) input k-space
-            mask: (b, 1, 1, w, 1) undersampling mask
-        Returns:
-            (b, 384, 384) magnitude image of the central slice
-        """
+    def _reconstruct(self, masked_kspace: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+        """Run the unrolled network and return the uncropped rss magnitude of the
+        central slice, shape (b, h, w)."""
         use_checkpoint = self.use_checkpoint and self.training and torch.is_grad_enabled()
 
         if use_checkpoint:
@@ -477,6 +472,15 @@ class PromptMR(nn.Module):
         # combine central slice with its sens maps, rss magnitude
         img_pred = torch.chunk(img_pred, self.num_adj_slices, dim=1)[self.center_slice]
         sens_maps = torch.chunk(sens_maps, self.num_adj_slices, dim=1)[self.center_slice]
-        result = fastmri.rss(fastmri.complex_abs(fastmri.complex_mul(img_pred, sens_maps)), dim=1)
-        result = center_crop(result, 384, 384)
-        return result
+        return fastmri.rss(fastmri.complex_abs(fastmri.complex_mul(img_pred, sens_maps)), dim=1)
+
+    def forward(self, masked_kspace: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            masked_kspace: (b, num_adj_slices*coil, h, w, 2) input k-space
+            mask: (b, 1, 1, w, 1) undersampling mask
+        Returns:
+            (b, 384, 384) magnitude image of the central slice
+        """
+        result = self._reconstruct(masked_kspace, mask)
+        return center_crop(result, 384, 384)
