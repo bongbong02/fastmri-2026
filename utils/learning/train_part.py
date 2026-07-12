@@ -11,11 +11,13 @@ from utils.data.load_data import create_data_loaders
 from utils.common.utils import save_reconstructions, ssim_loss
 from utils.common.loss_function import SSIMLoss
 from utils.model.varnet import VarNet
+from mraugment import MRAugment
 
 import os
 
 def train_epoch(args, epoch, model, data_loader, optimizer, loss_type):
     model.train()
+    data_loader.dataset.transform.set_epoch(epoch)
     start_epoch = start_iter = time.perf_counter()
     len_loader = len(data_loader)
     total_loss = 0.
@@ -109,7 +111,8 @@ def train(args):
     start_epoch = 0
 
     
-    train_loader = create_data_loaders(data_path = args.data_path_train, args = args, shuffle=True)
+    augmentor = MRAugment(args) if args.mraugment else None
+    train_loader = create_data_loaders(data_path = args.data_path_train, args = args, shuffle=True, augmentor=augmentor)
     val_loader = create_data_loaders(data_path = args.data_path_val, args = args)
     
     val_loss_log = np.empty((0, 2))

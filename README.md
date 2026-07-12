@@ -107,6 +107,18 @@ python train.py // sh train.sh
 - VarNet은 메모리 사용량이 크므로 batch size는 1을 기본으로 합니다.
 - **seed 고정**을 하여 이후에 Re-training하였을 때 **같은 결과가 나와야 합니다**.
 
+### MRAugment (선택 사항)
+
+학습 데이터가 적을 때 physics-aware augmentation을 활성화할 수 있습니다. 복소 multi-coil
+영상에 변환을 적용한 뒤 k-space와 RSS target을 함께 다시 생성하므로 두 데이터가 일관됩니다.
+validation/leaderboard에는 적용되지 않습니다.
+
+```bash
+python train.py --mraugment --aug-strength 0.55
+```
+
+세부 schedule 및 transform 설정은 `python train.py --help`와 `mraugment/README.md`를 참고하세요.
+
 ## 6. How to reconstruct & evaluate?
 ```bash
 python recon_eval.py        # 또는

@@ -13,9 +13,15 @@ def to_tensor(data):
     return torch.from_numpy(data)
 
 class DataTransform:
-    def __init__(self, isforward, max_key):
+    def __init__(self, isforward, max_key, augmentor=None):
         self.isforward = isforward
         self.max_key = max_key
+        self.augmentor = augmentor
+
+    def set_epoch(self, epoch):
+        if self.augmentor is not None:
+            self.augmentor.set_epoch(epoch)
+
     def __call__(self, mask, input, target, attrs, fname, slice):
         if not self.isforward:
             target = to_tensor(target)
@@ -24,7 +30,15 @@ class DataTransform:
             target = -1
             maximum = -1
         
-        kspace = to_tensor(input * mask)
+        input = to_tensor(input)
+        if self.augmentor is not None:
+            augmented, augmented_target = self.augmentor(input, target.shape)
+            input = augmented
+            if augmented_target is not None:
+                target = augmented_target
+
+        # MRAugment must run on full k-space; undersampling is applied last.
+        kspace = input * torch.from_numpy(mask)
         kspace = torch.stack((kspace.real, kspace.imag), dim=-1)
         mask = torch.from_numpy(mask.reshape(1, 1, kspace.shape[-2], 1).astype(np.float32)).byte()
         return mask, kspace, target, maximum, fname, slice

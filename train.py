@@ -11,6 +11,7 @@ from utils.learning.train_part import train
 if os.getcwd() + '/utils/common/' not in sys.path:
     sys.path.insert(1, os.getcwd() + '/utils/common/')
 from utils.common.utils import seed_fix
+from mraugment import add_mraugment_args
 
 
 def parse():
@@ -32,6 +33,8 @@ def parse():
     parser.add_argument('--target-key', type=str, default='image_label', help='Name of target key')
     parser.add_argument('--max-key', type=str, default='max', help='Name of max key in attributes')
     parser.add_argument('--seed', type=int, default=430, help='Fix random seed')
+
+    add_mraugment_args(parser)
 
     args = parser.parse_args()
     return args
