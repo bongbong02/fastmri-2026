@@ -61,6 +61,9 @@ class MRAugment:
 
     def __init__(self, args):
         self.enabled = bool(args.mraugment)
+        # coils are stacked as [slice0_coils, slice1_coils, ...] along dim 0; the
+        # target must be the RSS of the center slice's coils only.
+        self.num_adj_slices = getattr(args, "num_adj_slices", 1)
         self.schedule = args.aug_schedule
         self.delay = args.aug_delay
         self.strength = args.aug_strength
@@ -137,7 +140,13 @@ class MRAugment:
 
         x = x.reshape(-1, 2, *original_shape).permute(0, 2, 3, 1).contiguous()
         image = torch.view_as_complex(x)
-        target = _center_crop(torch.sqrt(torch.sum(torch.abs(image) ** 2, dim=0)), target_shape).float()
+        # target = RSS of the center slice's coils only, center crop/pad to
+        # target_shape so it matches the model output (utils.common.center_crop
+        # zero-pads narrow k-space up to 384; plain crop would leave it 384x372).
+        coils = image.shape[0] // self.num_adj_slices
+        center = self.num_adj_slices // 2
+        center_coils = image[center * coils:(center + 1) * coils]
+        target = _center_fit(torch.sqrt(torch.sum(torch.abs(center_coils) ** 2, dim=0)), target_shape).float()
         return _fft2c(image), target
 
 
