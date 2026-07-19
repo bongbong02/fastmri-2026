@@ -59,6 +59,23 @@ def parse():
     parser.add_argument('--target-key', type=str, default='image_label', help='Name of target key')
     parser.add_argument('--max-key', type=str, default='max', help='Name of max key in attributes')
     parser.add_argument('--seed', type=int, default=430, help='Fix random seed')
+    parser.add_argument('--grad-clip', type=float, default=0.1, help='Max grad norm (0 disables). Prevents loss blowup on unrolled nets')
+    parser.add_argument('--grad-accum', type=int, default=1, help='Gradient accumulation steps: effective batch = batch_size * grad_accum')
+    parser.add_argument('--max-vram-gb', type=float, default=0.0, help='Cap process VRAM to this many GiB (0=off). Fail-fast OOM to verify reproducibility on a smaller GPU')
+    # LR schedule: linear warmup (lr_start->lr_peak over lr_warmup_epochs) then
+    # cosine decay (lr_peak->lr_final over the remaining epochs). Overrides --lr.
+    parser.add_argument('--lr-schedule', action='store_true', help='Enable warmup+cosine LR schedule (overrides constant --lr)')
+    parser.add_argument('--lr-warmup-epochs', type=int, default=10, help='Linear warmup length (epochs)')
+    parser.add_argument('--lr-start', type=float, default=5e-5, help='LR at epoch 0 (warmup start)')
+    parser.add_argument('--lr-peak', type=float, default=2e-4, help='Peak LR at end of warmup')
+    parser.add_argument('--lr-final', type=float, default=5e-5, help='Final LR at last epoch (cosine end)')
+    parser.add_argument('--resume', action='store_true', help='Resume training from result/<net>/checkpoints/model.pt (weights, optimizer, epoch)')
+
+    # Weights & Biases logging
+    parser.add_argument('--wandb', action='store_true', help='Enable Weights & Biases logging')
+    parser.add_argument('--wandb-project', type=str, default='fastmri-promptmr', help='wandb project name')
+    parser.add_argument('--wandb-entity', type=str, default=None, help='wandb entity (team/user)')
+    parser.add_argument('--wandb-name', type=str, default=None, help='wandb run name (default: net-name)')
 
     add_mraugment_args(parser)
 

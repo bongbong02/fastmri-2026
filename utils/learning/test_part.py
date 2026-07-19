@@ -24,6 +24,14 @@ def load_model(args, device):
     model = build_model(train_args).to(device=device)
     model.load_state_dict(checkpoint['model'])
     model.eval()
+    # compute_sens_per_coil / use_checkpoint are training-time memory tools. They
+    # only slow things down and must NOT run during the timed leaderboard inference
+    # (per-coil sens estimates 75 coils sequentially -> high ms/slice, a scored
+    # metric). Force them off for reconstruction regardless of how it was trained.
+    if hasattr(model, 'compute_sens_per_coil'):
+        model.compute_sens_per_coil = False
+    if hasattr(model, 'use_checkpoint'):
+        model.use_checkpoint = False
     # data loading must match the trained slice neighborhood
     model.inference_num_adj_slices = getattr(train_args, 'num_adj_slices', 1)
     return model
