@@ -43,11 +43,13 @@ class PromptUnet(nn.Module):
                  adaptive_input=False,
                  n_buffer=0,
                  n_history=0,
+                 use_checkpoint=False,
                  ):
         super().__init__()
         self.feature_dim = feature_dim
         self.n_history = n_history
         self.n_buffer = n_buffer if adaptive_input else 0
+        self.use_checkpoint = use_checkpoint
 
         in_chans = in_chans * (1 + self.n_buffer) if adaptive_input else in_chans
         out_chans = out_chans * (1 + self.n_buffer) if adaptive_input else in_chans
@@ -81,6 +83,13 @@ class PromptUnet(nn.Module):
         # OutConv
         self.conv_last = conv(n_feat0, out_chans, 5, bias=bias)
 
+    def _cp(self, module, *args):
+        """Run ``module(*args)`` under gradient checkpointing when enabled, so its
+        internal activations are freed and recomputed in the backward pass."""
+        if self.use_checkpoint and self.training and torch.is_grad_enabled():
+            return torch.utils.checkpoint.checkpoint(module, *args, use_reentrant=False)
+        return module(*args)
+
     def forward(self, x, history_feat: Optional[List[torch.Tensor]] = None):
         if history_feat is None:
             history_feat = [None, None, None]
@@ -91,26 +100,26 @@ class PromptUnet(nn.Module):
         # 0. feature extraction
         x = self.feat_extract(x)
 
-        # 1. encoder
-        x, enc1 = self.enc_level1(x)
-        x, enc2 = self.enc_level2(x)
-        x, enc3 = self.enc_level3(x)
+        # 1. encoder (each level checkpointed: activations recomputed in backward)
+        x, enc1 = self._cp(self.enc_level1, x)
+        x, enc2 = self._cp(self.enc_level2, x)
+        x, enc3 = self._cp(self.enc_level3, x)
 
         # 2. bottleneck
-        x = self.bottleneck(x)
+        x = self._cp(self.bottleneck, x)
 
         # 3. decoder
         current_feat.append(x.clone())
         dec_prompt3 = self.prompt_level3(x)
-        x = self.dec_level3(x, dec_prompt3, self.skip_attn3(enc3), history_feat3)
+        x = self._cp(self.dec_level3, x, dec_prompt3, self.skip_attn3(enc3), history_feat3)
 
         current_feat.append(x.clone())
         dec_prompt2 = self.prompt_level2(x)
-        x = self.dec_level2(x, dec_prompt2, self.skip_attn2(enc2), history_feat2)
+        x = self._cp(self.dec_level2, x, dec_prompt2, self.skip_attn2(enc2), history_feat2)
 
         current_feat.append(x.clone())
         dec_prompt1 = self.prompt_level1(x)
-        x = self.dec_level1(x, dec_prompt1, self.skip_attn1(enc1), history_feat1)
+        x = self._cp(self.dec_level1, x, dec_prompt1, self.skip_attn1(enc1), history_feat1)
 
         # 4. update history features for the next cascade
         if self.n_history > 0:
@@ -141,6 +150,7 @@ class NormPromptUnet(nn.Module):
         adaptive_input=False,
         n_buffer=0,
         n_history=0,
+        use_checkpoint=False,
     ):
         super().__init__()
         self.n_history = n_history
@@ -161,6 +171,7 @@ class NormPromptUnet(nn.Module):
                                adaptive_input=adaptive_input,
                                n_buffer=n_buffer,
                                n_history=n_history,
+                               use_checkpoint=use_checkpoint,
                                )
 
     def complex_to_chan_dim(self, x: torch.Tensor) -> torch.Tensor:
@@ -182,7 +193,9 @@ class NormPromptUnet(nn.Module):
         std = x.std(dim=1).view(b, 1, 1, 1)
 
         x = x.view(b, c, h, w)
-        return (x - mean) / std, mean, std
+        # eps guards blank/constant slices (std=0), which otherwise produce NaN
+        # that corrupts the weights and pins the loss at ~1.
+        return (x - mean) / (std + 1e-12), mean, std
 
     def unnorm(self, x: torch.Tensor, mean: torch.Tensor, std: torch.Tensor) -> torch.Tensor:
         return x * std + mean
@@ -278,6 +291,7 @@ class SensitivityModel(nn.Module):
         mask_center: bool = True,
         learnable_prompt=False,
         use_sens_adj: bool = True,
+        use_checkpoint: bool = False,
     ):
         super().__init__()
         self.mask_center = mask_center
@@ -296,6 +310,7 @@ class SensitivityModel(nn.Module):
                                         n_bottleneck_cab=n_bottleneck_cab,
                                         no_use_ca=no_use_ca,
                                         learnable_prompt=learnable_prompt,
+                                        use_checkpoint=use_checkpoint,
                                         )
         self.kspace_acs_extractor = KspaceACSExtractor(mask_center)
 
@@ -325,7 +340,8 @@ class SensitivityModel(nn.Module):
         b, adj_coil, h, w, two = x.shape
         coil = adj_coil // self.num_adj_slices
         x = x.view(b, self.num_adj_slices, coil, h, w, two)
-        x = x / fastmri.rss_complex(x, dim=2).unsqueeze(-1).unsqueeze(2)
+        # eps guards blank slices where the coil RSS is 0 (avoids 0/0 -> NaN)
+        x = x / (fastmri.rss_complex(x, dim=2).unsqueeze(-1).unsqueeze(2) + 1e-12)
 
         return x.view(b, adj_coil, h, w, two)
 
@@ -419,6 +435,7 @@ class PromptMR(nn.Module):
             mask_center=mask_center,
             learnable_prompt=learnable_prompt,
             use_sens_adj=use_sens_adj,
+            use_checkpoint=use_checkpoint,
         )
         # DC + denoiser in each cascade
         self.cascades = nn.ModuleList([
@@ -440,10 +457,23 @@ class PromptMR(nn.Module):
                     adaptive_input=adaptive_input,
                     n_buffer=n_buffer,
                     n_history=n_history,
+                    use_checkpoint=use_checkpoint,
                 ),
                 num_adj_slices=num_adj_slices,
             ) for _ in range(num_cascades)
         ])
+
+    @staticmethod
+    def _cascade_flat(cascade, current_img, img_zf, latent, mask, sens_maps, h3, h2, h1):
+        """Run one cascade with history passed as three flat tensor args instead of a
+        list. torch.utils.checkpoint only tracks autograd through tensor arguments;
+        a list-of-tensors arg silently drops the history gradient across the
+        checkpoint boundary, so history features must be passed positionally."""
+        history_feat = None if h3 is None else [h3, h2, h1]
+        img_pred, latent, history_feat = cascade(current_img, img_zf, latent, mask, sens_maps, history_feat)
+        if history_feat is None:
+            return img_pred, latent, None, None, None
+        return img_pred, latent, history_feat[0], history_feat[1], history_feat[2]
 
     def _reconstruct(self, masked_kspace: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
         """Run the unrolled network and return the uncropped rss magnitude of the
@@ -464,8 +494,11 @@ class PromptMR(nn.Module):
 
         for cascade in self.cascades:
             if use_checkpoint:
-                img_pred, latent, history_feat = torch.utils.checkpoint.checkpoint(
-                    cascade, img_pred, img_zf, latent, mask, sens_maps, history_feat, use_reentrant=False)
+                h3, h2, h1 = history_feat if history_feat is not None else (None, None, None)
+                img_pred, latent, o3, o2, o1 = torch.utils.checkpoint.checkpoint(
+                    self._cascade_flat, cascade, img_pred, img_zf, latent, mask, sens_maps,
+                    h3, h2, h1, use_reentrant=False)
+                history_feat = None if o3 is None else [o3, o2, o1]
             else:
                 img_pred, latent, history_feat = cascade(img_pred, img_zf, latent, mask, sens_maps, history_feat)
 
