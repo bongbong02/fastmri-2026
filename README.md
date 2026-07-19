@@ -142,7 +142,14 @@ Leaderboard Recon Time : 193.96s (87.6 ms/slice)
 - ```Recon Time```은 전체 시간(```193.96s```)과 slice당 평균(```87.6 ms/slice```)이 함께 표시되며, 리더보드에는 **slice당 시간(ms/slice)** 을 기입합니다.
 - ```= Details =``` 이하 acc4 / acc8 세부 값은 참고용이며 기입 대상이 아닙니다.
 
-## 7. What to submit!
+## 7. PromptMR+
+* 이 브랜치는 baseline VarNet 위에 **PromptMR+** ([hellopipu/PromptMR-plus](https://github.com/hellopipu/PromptMR-plus))가 이식되어 있습니다. `train.py`의 기본 모델은 `--model promptmr`이며 `--model varnet`으로 기존 baseline도 사용할 수 있습니다.
+* 모델 코드: `utils/model/promptmr.py`, `utils/model/promptmr_utils.py` (einops 의존성 없음, vendored fastmri 연산 사용)
+* 데이터: `--num_adj_slices 5` (기본) 이면 인접 5개 slice의 k-space를 coil 축으로 쌓아 입력합니다 (경계는 clamp).
+* 추론: 체크포인트에 저장된 학습 hyperparameter로 모델을 재구성하므로 `recon_eval.py`는 그대로 사용하면 됩니다.
+* 기본 config는 축소판 (cascade 4, n_feat0 24, n_history 3)이며 논문 config는 `train.sh`의 주석을 참고하세요. VRAM 부족 시 `--use_checkpoint --compute_sens_per_coil`을 사용하세요.
+
+## 8. What to submit!
 - github repository(코드 실행 방법 readme에 상세 기록)
 - loss 그래프 혹은 기록
 - 모델 weight file
